@@ -48,27 +48,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         if (name && name.length > 3 && link && !link.includes('#')) {
           const containerText = container.text().replace(/\s+/g, ' ').trim();
-          const dayMonthRegex = /\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
-          const dateMatch = containerText.match(dayMonthRegex);
-          const dateStr = dateMatch ? dateMatch[0] : "TBD";
           
-          const gradeMatch = containerText.match(/Grade\s*(\d+)/i);
-          const grade = gradeMatch ? parseInt(gradeMatch[1]) : 1;
+          const dateRegex = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)/gi;
+          const dates = containerText.match(dateRegex);
           
-          const monthMatch = dateStr.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
-          const month = monthMatch ? monthMatch[0] : "Other";
+          if (dates && dates.length > 0) {
+            const startDateText = dates[0];
+            const yearMatch = containerText.match(/\b20\d{2}\b/);
+            const year = yearMatch ? yearMatch[0] : "2026";
+            
+            let displayDate = dates.length > 1 ? `${dates[0]} - ${dates[dates.length-1]}` : dates[0];
+            if (!displayDate.includes(year)) displayDate += ` ${year}`;
+            
+            // Extract Grade
+            let grade = 1;
+            const difficultyKeywords = "Moderate|Challenging|Beginner|Intermediate|Advanced|Technical|Introductory|Trek|Climb|Peak|Expedition|Course|Difficulty|Level|Grade";
+            
+            const numbers = containerText.match(/\b([1-9])\b/g);
+            if (numbers) {
+              const nonDateNumbers = numbers.filter(n => !displayDate.includes(n));
+              const gradeRegex = new RegExp(`(\\d)\\s+(?:[A-Za-z]+\\s+)*(?:${difficultyKeywords})`, "i");
+              const gradeMatch = containerText.match(gradeRegex);
+              
+              if (gradeMatch) {
+                grade = parseInt(gradeMatch[1]);
+              } else if (nonDateNumbers.length > 0) {
+                grade = parseInt(nonDateNumbers[0]);
+              }
+            }
 
-          websiteTrips.push({
-            name,
-            url: link.startsWith('http') ? link : `https://whitemagicadventure.com${link}`,
-            date: dateStr,
-            grade,
-            month
-          });
+            // Standardize Month
+            const monthMap: { [key: string]: string } = {
+              'Jan': 'January', 'Feb': 'February', 'Mar': 'March', 'Apr': 'April',
+              'May': 'May', 'Jun': 'June', 'Jul': 'July', 'Aug': 'August',
+              'Sep': 'September', 'Oct': 'October', 'Nov': 'November', 'Dec': 'December'
+            };
+            
+            const monthMatch = startDateText.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
+            let month = "Other";
+            if (monthMatch) {
+              const found = monthMatch[0].substring(0, 3);
+              const capitalized = found.charAt(0).toUpperCase() + found.slice(1).toLowerCase();
+              month = monthMap[capitalized] || capitalized;
+            }
+            
+            if (!websiteTrips.find(t => t.name === name && t.date === displayDate)) {
+              websiteTrips.push({
+                name,
+                date: displayDate,
+                month: month,
+                grade: Math.min(Math.max(grade, 1), 10),
+                url: link.startsWith("http") ? link : `https://whitemagicadventure.com${link}`
+              });
+            }
+          }
         }
       });
-    } catch (err) {
-      console.error("Error fetching website:", err);
+    } catch (webError) {
+      console.error("Website fetch error:", webError);
     }
 
     // 2. Fetch Google Sheet Data
