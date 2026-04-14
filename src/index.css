@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@theme {
+  --color-mountain-950: #f0f4f8;
+  --color-mountain-900: #e2e8f0;
+  --color-mountain-800: #cbd5e0;
+  --color-mountain-700: #a0aec0;
+  --color-mountain-600: #718096;
+  --color-mountain-500: #4a5568;
+  --color-mountain-400: #2d3748;
+  --color-accent-gold: #d4af37;
+  --color-accent-snow: #1a202c;
+  
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-mountain-950 text-accent-snow font-sans antialiased;
+    background-image: radial-gradient(#cbd5e0 0.5px, transparent 0.5px);
+    background-size: 20px 20px;
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    @apply bg-mountain-900/50 backdrop-blur-md border border-mountain-700/50 rounded-2xl;
+  }
+  
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-accent-snow to-mountain-700;
+  }
+}
