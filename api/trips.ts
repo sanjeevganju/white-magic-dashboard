@@ -21,6 +21,23 @@ export interface Trip {
   blogLinks?: string[];
 }
 
+// Helper to normalize and resolve URLs accurately
+function normalizeUrl(href: string, base: string = "https://whitemagicadventure.com"): string {
+  if (!href) return "";
+  href = href.trim();
+  if (href.startsWith("http://") || href.startsWith("https://")) return href;
+  if (href.startsWith("//")) return `https:${href}`;
+  
+  // Handle protocol-less domains like "indianexpress.com/..."
+  if (/^([a-z0-9-]+\.)+[a-z]{2,}/i.test(href) && !href.startsWith("/")) {
+    return `https://${href}`;
+  }
+  
+  const cleanBase = base.replace(/\/$/, "");
+  const cleanPath = href.startsWith("/") ? href : `/${href}`;
+  return `${cleanBase}${cleanPath}`;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -117,22 +134,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                       const $trip = cheerio.load(tripHtml);
                       
                       // Find Photo Albums and Blogs strictly from the text section
-                      $trip("p, div, strong, b, span, h3").each((_, el) => {
+                      $trip("p, strong, b, span, h3").each((_, el) => {
                         const $el = $trip(el);
+                        // Prevent searching if this element contains too much markup (it's likely a container)
+                        if ($el.children('div, section, article, nav').length > 0) return;
+
                         const text = $el.text().trim();
+                        if (!text) return;
                         
-                        // Check for Photo/Facebook Albums header (EXCLUDE "Related")
-                        if (/(photo|facebook)\s+albums/i.test(text) && !/related/i.test(text) && tripData.fbLinks.length === 0) {
+                        // Check for Photo/Facebook Albums header
+                        if (/Photo\s+Albums\s*-/i.test(text) && tripData.fbLinks.length === 0) {
                           let $next = $el.closest('div, p, h3');
                           let foundCount = 0;
                           
-                          for (let j = 0; j < 6; j++) {
+                          for (let j = 0; j < 5; j++) {
                             if (!$next.length) break;
-                            $next.find("a[href*='facebook.com'], a[href*='/photos/']").each((_, a) => {
-                              const href = $trip(a).attr("href");
-                              if (href && !tripData.fbLinks.includes(href) && foundCount < 2) {
-                                tripData.fbLinks.push(href);
-                                foundCount++;
+                            if (j > 0 && /(Blogs|Featured\s+news\s+articles)\s*-/i.test($next.text())) break;
+                            
+                            $next.find("a").each((_, a) => {
+                              let href = $trip(a).attr("href");
+                              if (href && href.includes("facebook.com")) {
+                                const absoluteHref = normalizeUrl(href);
+                                if (!tripData.fbLinks.includes(absoluteHref) && foundCount < 2) {
+                                  tripData.fbLinks.push(absoluteHref);
+                                  foundCount++;
+                                }
                               }
                             });
                             if (foundCount >= 2) break;
@@ -140,26 +166,91 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                           }
                         }
                         
-                        // Check for Blogs/Articles header (EXCLUDE "Related")
-                        if (/(blogs|featured\s+news\s+articles)/i.test(text) && !/related/i.test(text) && tripData.blogLinks.length === 0) {
-                          let $next = $el.closest('div, p, h3');
+                        // Check for Featured news articles header
+                        if (/Featured\s+news\s+articles\s*-/i.test(text)) {
+                          let $container = $el.closest('div, p, h3');
                           let foundCount = 0;
                           
-                          for (let j = 0; j < 6; j++) {
-                            if (!$next.length) break;
-                            $next.find("a").each((_, a) => {
-                              const href = $trip(a).attr("href");
-                              const isRelated = $trip(a).closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
-                              if (href && !isRelated && !href.includes("facebook.com") && !href.includes("twitter.com") && !href.includes("instagram.com")) {
-                                const fullHref = href.startsWith("http") ? href : `https://whitemagicadventure.com${href}`;
-                                if (!tripData.blogLinks.includes(fullHref) && foundCount < 2) {
-                                  tripData.blogLinks.push(fullHref);
+                          let $current = $container;
+                          for (let j = 0; j < 5; j++) {
+                            if (!$current || !$current.length) break;
+                            if (j > 0 && /(Blogs|Photo\s+Albums|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)\s*-/i.test($current.text())) break;
+
+                            $current.find("a").each((_, a) => {
+                              const $a = $trip(a);
+                              let href = $a.attr("href")?.trim();
+                              const linkText = $a.text().trim().toLowerCase();
+                              if (!href || foundCount >= 2) return;
+                              
+                              const isSocial = /twitter\.com|instagram\.com|linkedin\.com/i.test(href);
+                              const isUtility = /^(tel:|mailto:|javascript:|#)/i.test(href);
+                              const isRelated = $a.closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
+                              
+                              const absoluteHref = normalizeUrl(href);
+                              
+                              const navPaths = ['/', '/trips', '/trek', '/climb', '/discover', '/trek-walking-holidays', '/climb-mountaineering-expeditions', '/climb-trekking-peaks', '/faqs', '/about', '/contact', '/blog', '/news', '/home'];
+                              const isNavUrl = navPaths.some(path => {
+                                const fullPath = `https://whitemagicadventure.com${path}`;
+                                return absoluteHref === fullPath || absoluteHref === fullPath + '/';
+                              }) || absoluteHref === 'https://whitemagicadventure.com';
+                              
+                              const navWords = ['home', 'trips', 'listing', 'about', 'blog', 'ght', 'wm', 'faqs', 'contact', 'search', 'view all trips', 'view more'];
+                              const isNavText = navWords.some(word => linkText === word || linkText === word + ' trek');
+
+                              if (!isSocial && !isUtility && !isRelated && !isNavUrl && !isNavText) {
+                                if (!tripData.blogLinks.includes(absoluteHref)) {
+                                  tripData.blogLinks.push(absoluteHref);
                                   foundCount++;
                                 }
                               }
                             });
+                            
                             if (foundCount >= 2) break;
-                            $next = $next.next();
+                            $current = $current.next();
+                          }
+                        }
+
+                        // Check for Blogs header
+                        if (/^Blogs\s*-/i.test(text)) {
+                          let $container = $el.closest('div, p, h3');
+                          let foundCount = 0;
+                          
+                          let $current = $container;
+                          for (let j = 0; j < 5; j++) {
+                            if (!$current || !$current.length) break;
+                            if (j > 0 && /(Featured\s+news\s+articles|Photo\s+Albums|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)\s*-/i.test($current.text())) break;
+
+                            $current.find("a").each((_, a) => {
+                              const $a = $trip(a);
+                              let href = $a.attr("href")?.trim();
+                              const linkText = $a.text().trim().toLowerCase();
+                              if (!href || foundCount >= 1) return;
+                              
+                              const isSocial = /twitter\.com|instagram\.com|linkedin\.com/i.test(href);
+                              const isUtility = /^(tel:|mailto:|javascript:|#)/i.test(href);
+                              const isRelated = $a.closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
+                              
+                              const absoluteHref = normalizeUrl(href);
+                              
+                              const navPaths = ['/', '/trips', '/trek', '/climb', '/discover', '/trek-walking-holidays', '/climb-mountaineering-expeditions', '/climb-trekking-peaks', '/faqs', '/about', '/contact', '/blog', '/news', '/home'];
+                              const isNavUrl = navPaths.some(path => {
+                                const fullPath = `https://whitemagicadventure.com${path}`;
+                                return absoluteHref === fullPath || absoluteHref === fullPath + '/';
+                              }) || absoluteHref === 'https://whitemagicadventure.com';
+                              
+                              const navWords = ['home', 'trips', 'about', 'blog', 'faqs', 'contact'];
+                              const isNavText = navWords.some(word => linkText === word);
+
+                              if (!isSocial && !isUtility && !isRelated && !isNavUrl && !isNavText) {
+                                if (!tripData.blogLinks.includes(absoluteHref)) {
+                                  tripData.blogLinks.push(absoluteHref);
+                                  foundCount++;
+                                }
+                              }
+                            });
+                            
+                            if (foundCount >= 1) break;
+                            $current = $current.next();
                           }
                         }
                       });
@@ -287,7 +378,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         description: `Fixed Departure: ${wTrip.date}`,
         signUps: signUps,
         fbLinks: fbLinks.length > 0 ? fbLinks.slice(0, 2) : undefined,
-        blogLinks: blogLinks.length > 0 ? blogLinks.slice(0, 2) : undefined
+        blogLinks: blogLinks.length > 0 ? blogLinks.slice(0, 5) : undefined
       };
     });
 

@@ -14,7 +14,7 @@ import {
   ExternalLink,
   RefreshCw,
   AlertCircle,
-  Image as ImageIcon,
+  Facebook,
   BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -303,7 +303,7 @@ export default function App() {
                             className="text-blue-800 hover:text-blue-600 transition-colors p-1 bg-blue-50 rounded border border-blue-100"
                             title={`Photo Album ${i + 1}`}
                           >
-                            <ImageIcon className="w-3.5 h-3.5" />
+                            <Facebook className="w-3.5 h-3.5" />
                           </a>
                         ))}
                         {trip.blogLinks?.map((link, i) => (
