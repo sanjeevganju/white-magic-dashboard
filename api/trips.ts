@@ -38,6 +38,30 @@ function normalizeUrl(href: string, base: string = "https://whitemagicadventure.
   return `${cleanBase}${cleanPath}`;
 }
 
+// Helper to clean Facebook URLs for better mobile deep-linking
+function cleanFacebookUrl(url: string): string {
+  if (!url || !url.includes("facebook.com")) return url;
+  
+  try {
+    // Try to extract Album ID from media/set links which often break on mobile apps
+    // Example: set=a.385039118217807.92501...
+    const albumMatch = url.match(/[?&]set=a\.([0-9]+)/);
+    if (albumMatch && albumMatch[1]) {
+      return `https://www.facebook.com/${albumMatch[1]}`;
+    }
+    
+    // Try to extract from album_id param
+    const idMatch = url.match(/[?&]album_id=([0-9]+)/);
+    if (idMatch && idMatch[1]) {
+      return `https://www.facebook.com/${idMatch[1]}`;
+    }
+  } catch (e) {
+    // Fallback to original URL if parsing fails
+  }
+  
+  return url;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -154,7 +178,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             $next.find("a").each((_, a) => {
                               let href = $trip(a).attr("href");
                               if (href && href.includes("facebook.com")) {
-                                const absoluteHref = normalizeUrl(href);
+                                let absoluteHref = normalizeUrl(href);
+                                absoluteHref = cleanFacebookUrl(absoluteHref);
                                 if (!tripData.fbLinks.includes(absoluteHref) && foundCount < 2) {
                                   tripData.fbLinks.push(absoluteHref);
                                   foundCount++;
@@ -357,8 +382,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const fbLinks = [...(wTrip.fbLinks || [])];
       if (sheetMatch) {
-        if (fb1Key && sheetMatch[fb1Key] && !fbLinks.includes(sheetMatch[fb1Key])) fbLinks.push(sheetMatch[fb1Key]);
-        if (fb2Key && sheetMatch[fb2Key] && !fbLinks.includes(sheetMatch[fb2Key])) fbLinks.push(sheetMatch[fb2Key]);
+        if (fb1Key && sheetMatch[fb1Key]) {
+          const cleaned = cleanFacebookUrl(normalizeUrl(sheetMatch[fb1Key]));
+          if (!fbLinks.includes(cleaned)) fbLinks.push(cleaned);
+        }
+        if (fb2Key && sheetMatch[fb2Key]) {
+          const cleaned = cleanFacebookUrl(normalizeUrl(sheetMatch[fb2Key]));
+          if (!fbLinks.includes(cleaned)) fbLinks.push(cleaned);
+        }
       }
 
       const blogLinks = [...(wTrip.blogLinks || [])];

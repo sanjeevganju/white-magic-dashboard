@@ -300,6 +300,7 @@ export default function App() {
                             href={link}
                             target="_blank"
                             rel="noopener noreferrer"
+                            referrerPolicy="no-referrer"
                             className="text-blue-800 hover:text-blue-600 transition-colors p-1 bg-blue-50 rounded border border-blue-100"
                             title={`Photo Album ${i + 1}`}
                           >
