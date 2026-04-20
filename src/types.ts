@@ -12,6 +12,8 @@ export interface Trip {
   duration?: string;
   websiteUrl: string;
   signUps?: string;
+  fbLinks?: string[];
+  blogLinks?: string[];
 }
 
 export const MONTHS = [

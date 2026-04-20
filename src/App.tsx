@@ -13,7 +13,9 @@ import {
   MessageSquare, 
   ExternalLink,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Image as ImageIcon,
+  BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MONTHS, GRADES, Trip, Grade } from './types';
@@ -71,28 +73,29 @@ export default function App() {
   };
 
   const handleWhatsAppShare = (trip: Trip) => {
-    const text = `Hi! Check out this Grade ${trip.grade} trip: ${trip.name}. Date: ${trip.date}. Status: ${trip.status.toUpperCase()}. More info: ${trip.websiteUrl}`;
+    let text = `Hi! Check out this Grade ${trip.grade} trip: ${trip.name}. Date: ${trip.date}. Status: ${trip.status.toUpperCase()}. More info: ${trip.websiteUrl}`;
+    
+    if (trip.fbLinks && trip.fbLinks.length > 0) {
+      text += `\n\nPhoto Albums:`;
+      trip.fbLinks.forEach((link, i) => {
+        text += `\nAlbum ${i + 1}: ${link}`;
+      });
+    }
+    
+    if (trip.blogLinks && trip.blogLinks.length > 0) {
+      text += `\n\nBlog/Write-ups:`;
+      trip.blogLinks.forEach((link, i) => {
+        text += `\nBlog ${i + 1}: ${link}`;
+      });
+    }
+    
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  const handleEmailShare = (trip: Trip) => {
+  const getMailtoUrl = (trip: Trip) => {
     const subject = `Inquiry: ${trip.name} (${trip.date})`;
     const body = `Trip Details:\nName: ${trip.name}\nGrade: ${trip.grade}\nDate: ${trip.date}\nStatus: ${trip.status}\nLink: ${trip.websiteUrl}`;
-    const mailtoUrl = `mailto:info@whitemagicadventure.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    
-    // The "Hidden Iframe" trick is the most reliable way to trigger mailto 
-    // from within a sandboxed iframe without opening blank tabs.
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = mailtoUrl;
-    document.body.appendChild(iframe);
-    
-    // Clean up
-    setTimeout(() => {
-      if (iframe.parentNode) {
-        document.body.removeChild(iframe);
-      }
-    }, 500);
+    return `mailto:info@whitemagicadventure.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
   return (
@@ -271,32 +274,61 @@ export default function App() {
                     </div>
                     
                     <div className="flex items-center gap-4 pt-3 border-t border-mountain-900/50">
-                      <button 
-                        onClick={() => handleWhatsAppShare(trip)}
-                        className="text-green-600 hover:text-green-500 transition-colors flex items-center gap-1.5 text-xs font-bold"
-                        title="WhatsApp"
-                      >
-                        <MessageSquare className="w-4 h-4" />
-                        <span>WhatsApp</span>
-                      </button>
-                      <button 
-                        onClick={() => handleEmailShare(trip)}
-                        className="text-blue-600 hover:text-blue-500 transition-colors flex items-center gap-1.5 text-xs font-bold"
-                        title="Email"
-                      >
-                        <Mail className="w-4 h-4" />
-                        <span>Email</span>
-                      </button>
-                      <a 
-                        href={trip.websiteUrl} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-mountain-500 hover:text-mountain-700 transition-colors ml-auto flex items-center gap-1.5 text-xs font-bold"
-                        title="Open in new window"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        <span>Link</span>
-                      </a>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => handleWhatsAppShare(trip)}
+                          className="text-green-600 hover:text-green-500 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                          title="WhatsApp"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                          <span>WhatsApp</span>
+                        </button>
+                        <a 
+                          href={getMailtoUrl(trip)}
+                          className="text-blue-600 hover:text-blue-500 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                          title="Email"
+                        >
+                          <Mail className="w-4 h-4" />
+                          <span>Email</span>
+                        </a>
+                      </div>
+
+                      <div className="flex items-center gap-2 ml-auto">
+                        {trip.fbLinks?.map((link, i) => (
+                          <a 
+                            key={`fb-${i}`}
+                            href={link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-800 hover:text-blue-600 transition-colors p-1 bg-blue-50 rounded border border-blue-100"
+                            title={`Photo Album ${i + 1}`}
+                          >
+                            <ImageIcon className="w-3.5 h-3.5" />
+                          </a>
+                        ))}
+                        {trip.blogLinks?.map((link, i) => (
+                          <a 
+                            key={`blog-${i}`}
+                            href={link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-orange-800 hover:text-orange-600 transition-colors p-1 bg-orange-50 rounded border border-orange-100"
+                            title={`Blog/Write-up ${i + 1}`}
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                          </a>
+                        ))}
+                        <a 
+                          href={trip.websiteUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-mountain-500 hover:text-mountain-700 transition-colors flex items-center gap-1.5 text-xs font-bold ml-2"
+                          title="Open in new window"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          <span>Link</span>
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </motion.div>

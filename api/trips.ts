@@ -17,6 +17,8 @@ export interface Trip {
   duration?: string;
   websiteUrl: string;
   signUps?: string;
+  fbLinks?: string[];
+  blogLinks?: string[];
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -35,6 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const websiteUrl = "https://whitemagicadventure.com/trips";
       const { data: html } = await axios.get(websiteUrl, { headers, timeout: 10000 });
       const $ = cheerio.load(html);
+      const tripPromises: Promise<any>[] = [];
       
       $(".views-row, .trip-box, .trip-container").each((i, el) => {
         const container = $(el);
@@ -92,18 +95,84 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               month = monthMap[capitalized] || capitalized;
             }
             
+            const tripUrl = link.startsWith("http") ? link : `https://whitemagicadventure.com${link}`;
+            
             if (!websiteTrips.find(t => t.name === name && t.date === displayDate)) {
-              websiteTrips.push({
+              const tripData = {
                 name,
                 date: displayDate,
                 month: month,
                 grade: Math.min(Math.max(grade, 1), 10),
-                url: link.startsWith("http") ? link : `https://whitemagicadventure.com${link}`
-              });
+                url: tripUrl,
+                fbLinks: [] as string[],
+                blogLinks: [] as string[]
+              };
+              websiteTrips.push(tripData);
+              
+              // Limit individual page fetches to avoid Vercel timeout
+              if (tripPromises.length < 30) {
+                tripPromises.push(
+                  axios.get(tripUrl, { headers, timeout: 3000 })
+                    .then(({ data: tripHtml }) => {
+                      const $trip = cheerio.load(tripHtml);
+                      
+                      // Find Photo Albums and Blogs strictly from the text section
+                      $trip("p, div, strong, b, span, h3").each((_, el) => {
+                        const $el = $trip(el);
+                        const text = $el.text().trim();
+                        
+                        // Check for Photo/Facebook Albums header (EXCLUDE "Related")
+                        if (/(photo|facebook)\s+albums/i.test(text) && !/related/i.test(text) && tripData.fbLinks.length === 0) {
+                          let $next = $el.closest('div, p, h3');
+                          let foundCount = 0;
+                          
+                          for (let j = 0; j < 6; j++) {
+                            if (!$next.length) break;
+                            $next.find("a[href*='facebook.com'], a[href*='/photos/']").each((_, a) => {
+                              const href = $trip(a).attr("href");
+                              if (href && !tripData.fbLinks.includes(href) && foundCount < 2) {
+                                tripData.fbLinks.push(href);
+                                foundCount++;
+                              }
+                            });
+                            if (foundCount >= 2) break;
+                            $next = $next.next();
+                          }
+                        }
+                        
+                        // Check for Blogs/Articles header (EXCLUDE "Related")
+                        if (/(blogs|featured\s+news\s+articles)/i.test(text) && !/related/i.test(text) && tripData.blogLinks.length === 0) {
+                          let $next = $el.closest('div, p, h3');
+                          let foundCount = 0;
+                          
+                          for (let j = 0; j < 6; j++) {
+                            if (!$next.length) break;
+                            $next.find("a").each((_, a) => {
+                              const href = $trip(a).attr("href");
+                              const isRelated = $trip(a).closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
+                              if (href && !isRelated && !href.includes("facebook.com") && !href.includes("twitter.com") && !href.includes("instagram.com")) {
+                                const fullHref = href.startsWith("http") ? href : `https://whitemagicadventure.com${href}`;
+                                if (!tripData.blogLinks.includes(fullHref) && foundCount < 2) {
+                                  tripData.blogLinks.push(fullHref);
+                                  foundCount++;
+                                }
+                              }
+                            });
+                            if (foundCount >= 2) break;
+                            $next = $next.next();
+                          }
+                        }
+                      });
+                    })
+                    .catch(() => {}) // Ignore errors for individual pages
+                );
+              }
             }
           }
         }
       });
+      
+      await Promise.all(tripPromises);
     } catch (webError) {
       console.error("Website fetch error:", webError);
     }
@@ -186,8 +255,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const statusKey = Object.keys(records[0] || {}).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'status');
       const signUpsKey = Object.keys(records[0] || {}).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'sign ups');
       
+      // Look for FB and Blog links in the sheet
+      const fb1Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('fb1') || k.toLowerCase().includes('facebook 1'));
+      const fb2Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('fb2') || k.toLowerCase().includes('facebook 2'));
+      const blog1Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('blog 1') || k.toLowerCase().includes('write up 1'));
+      const blog2Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('blog 2') || k.toLowerCase().includes('write up 2'));
+
       const status = sheetMatch && statusKey && normalize(sheetMatch[statusKey] || "") === "open" ? "open" : "closed";
       const signUps = sheetMatch && signUpsKey ? sheetMatch[signUpsKey] : undefined;
+
+      const fbLinks = [...(wTrip.fbLinks || [])];
+      if (sheetMatch) {
+        if (fb1Key && sheetMatch[fb1Key] && !fbLinks.includes(sheetMatch[fb1Key])) fbLinks.push(sheetMatch[fb1Key]);
+        if (fb2Key && sheetMatch[fb2Key] && !fbLinks.includes(sheetMatch[fb2Key])) fbLinks.push(sheetMatch[fb2Key]);
+      }
+
+      const blogLinks = [...(wTrip.blogLinks || [])];
+      if (sheetMatch) {
+        if (blog1Key && sheetMatch[blog1Key] && !blogLinks.includes(sheetMatch[blog1Key])) blogLinks.push(sheetMatch[blog1Key]);
+        if (blog2Key && sheetMatch[blog2Key] && !blogLinks.includes(sheetMatch[blog2Key])) blogLinks.push(sheetMatch[blog2Key]);
+      }
 
       return {
         id: `trip-${index}`,
@@ -198,7 +285,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: status as "open" | "closed",
         websiteUrl: wTrip.url,
         description: `Fixed Departure: ${wTrip.date}`,
-        signUps: signUps
+        signUps: signUps,
+        fbLinks: fbLinks.length > 0 ? fbLinks.slice(0, 2) : undefined,
+        blogLinks: blogLinks.length > 0 ? blogLinks.slice(0, 2) : undefined
       };
     });
 
