@@ -1,4 +1,5 @@
 /**
+ * Version: 1.0.2 - Deployment Trigger for Photo Albums Fix
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */

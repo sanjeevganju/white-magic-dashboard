@@ -166,40 +166,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         const text = $el.text().trim();
                         if (!text) return;
                         
+                        // Version: 1.0.3 - Robust Scraping for Albums
                         // Check for Photo/Facebook Albums header
-                        if (/Photo\s+Albums\s*-/i.test(text) && tripData.fbLinks.length === 0) {
+                        if (/Photo\s+Album/i.test(text) && tripData.fbLinks.length === 0) {
                           let $next = $el.closest('div, p, h3');
                           let foundCount = 0;
                           
                           for (let j = 0; j < 5; j++) {
                             if (!$next.length) break;
-                            if (j > 0 && /(Blogs|Featured\s+news\s+articles)\s*-/i.test($next.text())) break;
+                            if (j > 0 && /(Blogs|Featured\s+news\s+articles)/i.test($next.text())) break;
                             
                             $next.find("a").each((_, a) => {
                               let href = $trip(a).attr("href");
-                              if (href && href.includes("facebook.com")) {
+                              if (href && (href.includes("facebook.com") || href.includes("photos.google.com"))) {
                                 let absoluteHref = normalizeUrl(href);
-                                absoluteHref = cleanFacebookUrl(absoluteHref);
-                                if (!tripData.fbLinks.includes(absoluteHref) && foundCount < 2) {
+                                if (absoluteHref.includes("facebook.com")) {
+                                  absoluteHref = cleanFacebookUrl(absoluteHref);
+                                }
+                                if (!tripData.fbLinks.includes(absoluteHref) && foundCount < 3) {
                                   tripData.fbLinks.push(absoluteHref);
                                   foundCount++;
                                 }
                               }
                             });
-                            if (foundCount >= 2) break;
+                            if (foundCount >= 3) break;
                             $next = $next.next();
                           }
                         }
                         
                         // Check for Featured news articles header
-                        if (/Featured\s+news\s+articles\s*-/i.test(text)) {
+                        if (/Featured\s+news\s+articles/i.test(text)) {
                           let $container = $el.closest('div, p, h3');
                           let foundCount = 0;
                           
                           let $current = $container;
                           for (let j = 0; j < 5; j++) {
                             if (!$current || !$current.length) break;
-                            if (j > 0 && /(Blogs|Photo\s+Albums|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)\s*-/i.test($current.text())) break;
+                            if (j > 0 && /(Blogs|Photo\s+Album|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)/i.test($current.text())) break;
 
                             $current.find("a").each((_, a) => {
                               const $a = $trip(a);
@@ -236,14 +239,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         }
 
                         // Check for Blogs header
-                        if (/^Blogs\s*-/i.test(text)) {
+                        if (/Blogs\s*-/i.test(text)) {
                           let $container = $el.closest('div, p, h3');
                           let foundCount = 0;
                           
                           let $current = $container;
                           for (let j = 0; j < 5; j++) {
                             if (!$current || !$current.length) break;
-                            if (j > 0 && /(Featured\s+news\s+articles|Photo\s+Albums|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)\s*-/i.test($current.text())) break;
+                            if (j > 0 && /(Featured\s+news\s+articles|Photo\s+Album|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)/i.test($current.text())) break;
 
                             $current.find("a").each((_, a) => {
                               const $a = $trip(a);
