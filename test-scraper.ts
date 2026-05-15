@@ -56,23 +56,31 @@ async function testUrl(url: string, label: string) {
         }
       }
 
-      if (/Photo\s+Albums\s*-/i.test(text)) {
+      if (/^Blogs\s*-/i.test(text)) {
         console.log(`\nHeader: "${text}"`);
-        let $next = $el.closest('div, p, h3').next();
+        let $container = $el.closest('div, p, h3');
+        let $current = $container;
         let foundCount = 0;
         for (let j = 0; j < 5; j++) {
-            if (!$next.length) break;
-            if (j > 0 && /(Blogs|Featured\s+news\s+articles)\s*-/i.test($next.text())) break;
+            if (!$current.length) break;
+            if (j > 0 && /(Featured\s+news\s+articles|Photo\s+Albums|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)\s*-/i.test($current.text())) break;
             
-            $next.find("a").each((_, a) => {
-                const href = $(a).attr("href");
-                if (href && href.includes("facebook.com")) {
-                    console.log(`  - [FB] ${href}`);
-                    foundCount++;
+            $current.find("a").each((_, a) => {
+                const $a = $(a);
+                const href = $a.attr("href");
+                const lText = $a.text().trim();
+                const absolute = normalizeUrl(href || '');
+                if (href && !absolute.includes('tel:') && !absolute.includes('mailto:')) {
+                    const navWords = ['home', 'trips', 'about', 'blog', 'faqs', 'contact'];
+                    const isNavText = navWords.some(word => lText.toLowerCase() === word);
+                    if (!isNavText && foundCount < 1) {
+                         console.log(`  - [BLOG] ${lText} -> ${absolute}`);
+                         foundCount++;
+                    }
                 }
             });
-            if (foundCount >= 2) break;
-            $next = $next.next();
+            if (foundCount >= 1) break;
+            $current = $current.next();
         }
       }
     });
@@ -84,7 +92,6 @@ async function testUrl(url: string, label: string) {
 async function run() {
   await testUrl('https://whitemagicadventure.com/trek-walking-holidays/panwali-kantha-trek', 'PANWALI KANTHA');
   await testUrl('https://whitemagicadventure.com/trek-trekking-expeditions/panpatia-col', 'PANPATIA COL');
-  await testUrl('https://whitemagicadventure.com/climb-trekking-peaks/kang-yatse-ii', 'KANG YATSE II');
 }
 
 run();

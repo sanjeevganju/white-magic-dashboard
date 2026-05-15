@@ -79,6 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { data: html } = await axios.get(websiteUrl, { headers, timeout: 10000 });
       const $ = cheerio.load(html);
       const tripPromises: Promise<any>[] = [];
+      const MAX_DETAIL_FETCHES = 100;
       
       $(".views-row, .trip-box, .trip-container").each((i, el) => {
         const container = $(el);
@@ -93,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (name && name.length > 3 && link && !link.includes('#')) {
           const containerText = container.text().replace(/\s+/g, ' ').trim();
           
-          const dateRegex = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)/gi;
+          const dateRegex = /(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)/gi;
           const dates = containerText.match(dateRegex);
           
           if (dates && dates.length > 0) {
@@ -150,10 +151,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               };
               websiteTrips.push(tripData);
               
-              // Limit individual page fetches to avoid Vercel timeout
-              if (tripPromises.length < 30) {
+              // Incrementally fetch details without blocking too much
+              if (tripPromises.length < MAX_DETAIL_FETCHES) {
                 tripPromises.push(
-                  axios.get(tripUrl, { headers, timeout: 3000 })
+                  axios.get(tripUrl, { headers, timeout: 8000 })
                     .then(({ data: tripHtml }) => {
                       const $trip = cheerio.load(tripHtml);
                       
@@ -166,7 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         const text = $el.text().trim();
                         if (!text) return;
                         
-                        // Version: 1.0.3 - Robust Scraping for Albums
                         // Check for Photo/Facebook Albums header
                         if (/Photo\s+Album/i.test(text) && tripData.fbLinks.length === 0) {
                           let $next = $el.closest('div, p, h3');

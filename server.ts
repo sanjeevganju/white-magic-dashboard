@@ -76,6 +76,7 @@ async function startServer() {
 
         // Find all trip containers
         const tripPromises: Promise<any>[] = [];
+        const MAX_DETAIL_FETCHES = 100; // Increased from 20/30 to cover all trips
         
         $(".views-row, .trip-box, .trip-container").each((i, el) => {
           const container = $(el);
@@ -89,7 +90,8 @@ async function startServer() {
           
           if (name && name.length > 3 && link && !link.includes('#')) {
             const containerText = container.text().replace(/\s+/g, ' ').trim();
-            const dateRegex = /(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)/gi;
+            // Upgraded regex to handle "9th", "1st", etc.
+            const dateRegex = /(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)/gi;
             const dates = containerText.match(dateRegex);
             
             if (dates && dates.length > 0) {
@@ -144,148 +146,148 @@ async function startServer() {
                 websiteTrips.push(tripData);
                 
                 // Fetch individual trip page for FB and Blog links
-                tripPromises.push(
-                  axios.get(tripUrl, { headers, timeout: 5000 })
-                    .then(({ data: tripHtml }) => {
-                      const $trip = cheerio.load(tripHtml);
-                      
-                      // Find Photo Albums and Blogs strictly from the text section
-                      $trip("p, strong, b, span, h3").each((_, el) => {
-                        const $el = $trip(el);
-                        // Prevent searching if this element contains too much markup (it's likely a container)
-                        if ($el.children('div, section, article, nav').length > 0) return;
-
-                        const text = $el.text().trim();
-                        if (!text) return;
+                if (tripPromises.length < MAX_DETAIL_FETCHES) {
+                  tripPromises.push(
+                    axios.get(tripUrl, { headers, timeout: 8000 })
+                      .then(({ data: tripHtml }) => {
+                        const $trip = cheerio.load(tripHtml);
                         
-                        // Version: 1.0.3 - Robust Scraping for Albums
-                        // Check for Photo/Facebook Albums header
-                        if (/Photo\s+Album/i.test(text) && tripData.fbLinks.length === 0) {
-                          let $next = $el.closest('div, p, h3');
-                          let foundCount = 0;
+                        // Find Photo Albums and Blogs strictly from the text section
+                        $trip("p, strong, b, span, h3").each((_, el) => {
+                          const $el = $trip(el);
+                          // Prevent searching if this element contains too much markup (it's likely a container)
+                          if ($el.children('div, section, article, nav').length > 0) return;
+
+                          const text = $el.text().trim();
+                          if (!text) return;
                           
-                          for (let j = 0; j < 5; j++) {
-                            if (!$next.length) break;
-                            if (j > 0 && /(Blogs|Featured\s+news\s+articles)/i.test($next.text())) break;
+                          // Version: 1.0.3 - Robust Scraping for Albums
+                          if (/Photo\s+Album/i.test(text) && tripData.fbLinks.length === 0) {
+                            let $next = $el.closest('div, p, h3');
+                            let foundCount = 0;
                             
-                            $next.find("a").each((_, a) => {
-                              const $a = $trip(a);
-                              let href = $a.attr("href")?.trim();
-                              if (href && (href.includes("facebook.com") || href.includes("photos.google.com"))) {
-                                let absoluteHref = normalizeUrl(href);
-                                if (absoluteHref.includes("facebook.com")) {
-                                  absoluteHref = cleanFacebookUrl(absoluteHref);
+                            for (let j = 0; j < 5; j++) {
+                              if (!$next.length) break;
+                              if (j > 0 && /(Blogs|Featured\s+news\s+articles)/i.test($next.text())) break;
+                              
+                              $next.find("a").each((_, a) => {
+                                const $a = $trip(a);
+                                let href = $a.attr("href")?.trim();
+                                if (href && (href.includes("facebook.com") || href.includes("photos.google.com"))) {
+                                  let absoluteHref = normalizeUrl(href);
+                                  if (absoluteHref.includes("facebook.com")) {
+                                    absoluteHref = cleanFacebookUrl(absoluteHref);
+                                  }
+                                  if (!tripData.fbLinks.includes(absoluteHref) && foundCount < 3) {
+                                    tripData.fbLinks.push(absoluteHref);
+                                    foundCount++;
+                                  }
                                 }
-                                if (!tripData.fbLinks.includes(absoluteHref) && foundCount < 3) {
-                                  tripData.fbLinks.push(absoluteHref);
-                                  foundCount++;
-                                }
-                              }
-                            });
-                            if (foundCount >= 3) break;
-                            $next = $next.next();
+                              });
+                              if (foundCount >= 3) break;
+                              $next = $next.next();
+                            }
                           }
-                        }
-                        
-                        // Check for Featured news articles header
-                        if (/Featured\s+news\s+articles/i.test(text)) {
-                          let $container = $el.closest('div, p, h3');
-                          let foundCount = 0;
                           
-                          let $current = $container;
-                          for (let j = 0; j < 5; j++) {
-                            if (!$current || !$current.length) break;
-                            if (j > 0 && /(Blogs|Photo\s+Album|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)/i.test($current.text())) break;
-
-                            $current.find("a").each((_, a) => {
-                              const $a = $trip(a);
-                              let href = $a.attr("href")?.trim();
-                              const linkText = $a.text().trim().toLowerCase();
-                              if (!href || foundCount >= 2) return;
-                              
-                              const isSocial = /twitter\.com|instagram\.com|linkedin\.com/i.test(href);
-                              const isUtility = /^(tel:|mailto:|javascript:|#)/i.test(href);
-                              const isRelated = $a.closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
-                              
-                              const absoluteHref = normalizeUrl(href);
-                              
-                              const navPaths = ['/', '/trips', '/trek', '/climb', '/discover', '/trek-walking-holidays', '/climb-mountaineering-expeditions', '/climb-trekking-peaks', '/faqs', '/about', '/contact', '/blog', '/news', '/home'];
-                              const isNavUrl = navPaths.some(path => {
-                                const fullPath = `https://whitemagicadventure.com${path}`;
-                                return absoluteHref === fullPath || absoluteHref === fullPath + '/';
-                              }) || absoluteHref === 'https://whitemagicadventure.com';
-                              
-                              const navWords = ['home', 'trips', 'listing', 'about', 'blog', 'ght', 'wm', 'faqs', 'contact', 'search', 'view all trips', 'view more'];
-                              const isNavText = navWords.some(word => linkText === word || linkText === word + ' trek');
-
-                              if (!isSocial && !isUtility && !isRelated && !isNavUrl && !isNavText) {
-                                if (!tripData.blogLinks.includes(absoluteHref)) {
-                                  tripData.blogLinks.push(absoluteHref);
-                                  foundCount++;
-                                }
-                              }
-                            });
+                          // Check for Featured news articles header
+                          if (/Featured\s+news\s+articles/i.test(text)) {
+                            let $container = $el.closest('div, p, h3');
+                            let foundCount = 0;
                             
-                            if (foundCount >= 2) break;
-                            $current = $current.next();
-                          }
-                        }
+                            let $current = $container;
+                            for (let j = 0; j < 5; j++) {
+                              if (!$current || !$current.length) break;
+                              if (j > 0 && /(Blogs|Photo\s+Album|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)/i.test($current.text())) break;
 
-                        // Check for Blogs header
-                        if (/Blogs\s*-/i.test(text)) {
-                          let $container = $el.closest('div, p, h3');
-                          let foundCount = 0;
-                          
-                          let $current = $container;
-                          for (let j = 0; j < 5; j++) {
-                            if (!$current || !$current.length) break;
-                            if (j > 0 && /(Featured\s+news\s+articles|Photo\s+Album|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)/i.test($current.text())) break;
+                              $current.find("a").each((_, a) => {
+                                const $a = $trip(a);
+                                let href = $a.attr("href")?.trim();
+                                const linkText = $a.text().trim().toLowerCase();
+                                if (!href || foundCount >= 2) return;
+                                
+                                const isSocial = /twitter\.com|instagram\.com|linkedin\.com/i.test(href);
+                                const isUtility = /^(tel:|mailto:|javascript:|#)/i.test(href);
+                                const isRelated = $a.closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
+                                
+                                const absoluteHref = normalizeUrl(href);
+                                
+                                const navPaths = ['/', '/trips', '/trek', '/climb', '/discover', '/trek-walking-holidays', '/climb-mountaineering-expeditions', '/climb-trekking-peaks', '/faqs', '/about', '/contact', '/blog', '/news', '/home'];
+                                const isNavUrl = navPaths.some(path => {
+                                  const fullPath = `https://whitemagicadventure.com${path}`;
+                                  return absoluteHref === fullPath || absoluteHref === fullPath + '/';
+                                }) || absoluteHref === 'https://whitemagicadventure.com';
+                                
+                                const navWords = ['home', 'trips', 'listing', 'about', 'blog', 'ght', 'wm', 'faqs', 'contact', 'search', 'view all trips', 'view more'];
+                                const isNavText = navWords.some(word => linkText === word || linkText === word + ' trek');
 
-                            $current.find("a").each((_, a) => {
-                              const $a = $trip(a);
-                              let href = $a.attr("href")?.trim();
-                              const linkText = $a.text().trim().toLowerCase();
-                              if (!href || foundCount >= 1) return;
-                              
-                              const isSocial = /twitter\.com|instagram\.com|linkedin\.com/i.test(href);
-                              const isUtility = /^(tel:|mailto:|javascript:|#)/i.test(href);
-                              const isRelated = $a.closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
-                              
-                              const absoluteHref = normalizeUrl(href);
-                              
-                              const navPaths = ['/', '/trips', '/trek', '/climb', '/discover', '/trek-walking-holidays', '/climb-mountaineering-expeditions', '/climb-trekking-peaks', '/faqs', '/about', '/contact', '/blog', '/news', '/home'];
-                              const isNavUrl = navPaths.some(path => {
-                                const fullPath = `https://whitemagicadventure.com${path}`;
-                                return absoluteHref === fullPath || absoluteHref === fullPath + '/';
-                              }) || absoluteHref === 'https://whitemagicadventure.com';
-                              
-                              const navWords = ['home', 'trips', 'about', 'blog', 'faqs', 'contact'];
-                              const isNavText = navWords.some(word => linkText === word);
-
-                              if (!isSocial && !isUtility && !isRelated && !isNavUrl && !isNavText) {
-                                if (!tripData.blogLinks.includes(absoluteHref)) {
-                                  tripData.blogLinks.push(absoluteHref);
-                                  foundCount++;
+                                if (!isSocial && !isUtility && !isRelated && !isNavUrl && !isNavText) {
+                                  if (!tripData.blogLinks.includes(absoluteHref)) {
+                                    tripData.blogLinks.push(absoluteHref);
+                                    foundCount++;
+                                  }
                                 }
-                              }
-                            });
-                            
-                            if (foundCount >= 1) break;
-                            $current = $current.next();
+                              });
+                              
+                              if (foundCount >= 2) break;
+                              $current = $current.next();
+                            }
                           }
-                        }
-                      });
-                    })
-                    .catch(err => console.error(`Error fetching trip page ${tripUrl}:`, err.message))
-                );
+
+                          // Check for Blogs header
+                          if (/Blogs\s*-/i.test(text)) {
+                            let $container = $el.closest('div, p, h3');
+                            let foundCount = 0;
+                            
+                            let $current = $container;
+                            for (let j = 0; j < 5; j++) {
+                              if (!$current || !$current.length) break;
+                              if (j > 0 && /(Featured\s+news\s+articles|Photo\s+Album|Video|Itinerary|Cost\s+Details|What\s+to\s+expect|Photo\s+gallery)/i.test($current.text())) break;
+
+                              $current.find("a").each((_, a) => {
+                                const $a = $trip(a);
+                                let href = $a.attr("href")?.trim();
+                                const linkText = $a.text().trim().toLowerCase();
+                                if (!href || foundCount >= 1) return;
+                                
+                                const isSocial = /twitter\.com|instagram\.com|linkedin\.com/i.test(href);
+                                const isUtility = /^(tel:|mailto:|javascript:|#)/i.test(href);
+                                const isRelated = $a.closest('.related-blogs, .field-name-field-related-blogs, #related-blogs').length > 0;
+                                
+                                const absoluteHref = normalizeUrl(href);
+                                
+                                const navPaths = ['/', '/trips', '/trek', '/climb', '/discover', '/trek-walking-holidays', '/climb-mountaineering-expeditions', '/climb-trekking-peaks', '/faqs', '/about', '/contact', '/blog', '/news', '/home'];
+                                const isNavUrl = navPaths.some(path => {
+                                  const fullPath = `https://whitemagicadventure.com${path}`;
+                                  return absoluteHref === fullPath || absoluteHref === fullPath + '/';
+                                }) || absoluteHref === 'https://whitemagicadventure.com';
+                                
+                                const navWords = ['home', 'trips', 'about', 'blog', 'faqs', 'contact'];
+                                const isNavText = navWords.some(word => linkText === word);
+
+                                if (!isSocial && !isUtility && !isRelated && !isNavUrl && !isNavText) {
+                                  if (!tripData.blogLinks.includes(absoluteHref)) {
+                                    tripData.blogLinks.push(absoluteHref);
+                                    foundCount++;
+                                  }
+                                }
+                              });
+                              
+                              if (foundCount >= 1) break;
+                              $current = $current.next();
+                            }
+                          }
+                        });
+                      })
+                      .catch(err => console.error(`Error fetching trip page ${tripUrl}:`, err.message))
+                  );
+                }
               }
             }
           }
         });
         
-        // Wait for all trip pages to be fetched (with a timeout or limit if needed)
-        // For now, let's just wait for all of them but limit to first 20 to avoid timeout
-        await Promise.all(tripPromises.slice(0, 20));
+        // Wait for all designated trip pages to be fetched
+        await Promise.all(tripPromises);
         
         console.log(`Found ${websiteTrips.length} trips on website`);
       } catch (webError) {
