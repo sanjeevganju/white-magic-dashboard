@@ -4,8 +4,9 @@ export interface Trip {
   id: string;
   name: string;
   grade: Grade;
-  date: string; // Specific start date from website
+  date: string; // Specific start date or "Plan for [Month]"
   month: string; // Extracted month for filtering
+  region?: string; // e.g. Ladakh, Sikkim, Nepal
   status: 'open' | 'closed';
   description?: string;
   price?: string;
@@ -14,6 +15,7 @@ export interface Trip {
   signUps?: string;
   fbLinks?: string[];
   blogLinks?: string[];
+  isLive: boolean; // True if it's a website departure, false if from database
 }
 
 export const MONTHS = [

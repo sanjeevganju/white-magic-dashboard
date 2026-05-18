@@ -48,6 +48,33 @@ function cleanFacebookUrl(url: string): string {
   return url;
 }
 
+// Helper to detect Region from text or URL
+function detectRegion(text: string, url: string = ""): string {
+  const combined = `${text} ${url}`.toUpperCase();
+  
+  // Specific mappings for Google Sheet (Column F or names)
+  if (combined.includes("HIMACHAL_PRADESH") || combined.includes("HIMACHAL")) return "Himachal";
+  if (combined.includes("UTTARAKHAND") || combined.includes("UTTARAK")) return "Uttarakhand";
+  if (combined.includes("LADAKH")) return "Ladakh";
+  if (combined.includes("J&K") || combined.includes("KASHMIR")) return "Kashmir";
+  if (combined.includes("SIKKIM_DARJEELING") || combined.includes("SIKKIM")) return "Sikkim";
+  if (combined.includes("BHUTAN")) return "Bhutan";
+  if (combined.includes("NEPAL")) return "Nepal";
+
+  const lowerCombined = combined.toLowerCase();
+  const regions = [
+    "Ladakh", "Zanskar", "Sikkim", "Nepal", "Garhwal", "Kumaon", 
+    "Himachal", "Spiti", "Bhutan", "Africa", "Tanzania", "Kilimanjaro",
+    "Patagonia", "Europe", "Georgia", "Turkey", "Kashmir"
+  ];
+  
+  for (const region of regions) {
+    if (lowerCombined.includes(region.toLowerCase())) return region;
+  }
+  
+  return "Himalayas"; // Default
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -138,6 +165,7 @@ async function startServer() {
                   name,
                   date: displayDate,
                   month: month,
+                  region: detectRegion(containerText, link),
                   grade: Math.min(Math.max(grade, 1), 10),
                   url: tripUrl,
                   fbLinks: [] as string[],
@@ -294,137 +322,147 @@ async function startServer() {
         console.error("Website fetch error:", webError);
       }
 
-      // 2. Fetch Google Sheet Data
-      let records: any[] = [];
+      // 2. Fetch Google Sheet Data (Trek Database)
+      let databaseTreks: any[] = [];
       try {
-        // Alternative export URL that is sometimes more reliable
         const sheetId = "1Ft94dOMfapiHeHh3IdRUBOMgPhRf6WTFZnv51aVwWK8";
-        const gid = "1778692444";
-        const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=${gid}`;
+        const databaseGid = "1637681821"; // Sheet13
+        const databaseUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${databaseGid}`;
         
-        const { data: csvData } = await axios.get(sheetUrl, { headers, timeout: 10000 });
-        records = parse(csvData, {
-          columns: true,
+        const { data: dbCsvData } = await axios.get(databaseUrl, { headers, timeout: 10000 });
+        const dbRecords = parse(dbCsvData, {
+          columns: false,
           skip_empty_lines: true,
         });
-        console.log(`Fetched ${records.length} records from Google Sheet`);
-      } catch (sheetError) {
-        console.error("Google Sheet fetch error:", sheetError);
-        // Try the original URL as fallback
-        try {
-          const fallbackUrl = "https://docs.google.com/spreadsheets/d/1Ft94dOMfapiHeHh3IdRUBOMgPhRf6WKFZnv51aVwWK8/export?format=csv&gid=1778692444";
-          const { data: csvData } = await axios.get(fallbackUrl, { headers, timeout: 10000 });
-          records = parse(csvData, { columns: true, skip_empty_lines: true });
-        } catch (e) {
-          console.error("Fallback sheet fetch also failed");
+
+        // Filter out header row and empty rows
+        if (dbRecords.length > 1) {
+          databaseTreks = dbRecords.slice(1).map((row: string[]) => {
+            // Mapping based on user input:
+            // Column B (Index 1): Filter for "FD"
+            // Trek Name: Column C (Index 2)
+            // Region: Column F (Index 5)
+            // Month of Interest: Column AD (Index 29)
+            // Duration: Column AE (Index 30)
+            // Difficulty Grade: Column AF (Index 31)
+            
+            const statusType = (row[1] || "").trim().toUpperCase();
+            if (statusType !== "FD") return null;
+
+            const trekName = (row[2] || "").trim(); 
+            const region = (row[5] || "").trim();
+            const monthsStr = row[29] || ""; 
+            const duration = row[30] || ""; 
+            const gradeRaw = row[31] || "";
+            
+            // Extract numeric grade (e.g. "04" from "04 - Moderate Trek")
+            const gradeMatch = gradeRaw.match(/^(\d+)/);
+            const grade = gradeMatch ? parseInt(gradeMatch[1]) : 1;
+            
+            // Parse months string (e.g. "Mar- Apr-May- Sep-Oct-Nov-Dec-Jan-Feb")
+            const months = monthsStr
+              .split(/[-,\s&]+/)
+              .map(m => m.trim())
+              .filter(m => m.length >= 3);
+            
+            return {
+              name: trekName,
+              region: region,
+              grade: grade,
+              months,
+              duration,
+              source: 'database'
+            };
+          }).filter((t: any) => t !== null && t.name.length > 3);
         }
+        console.log(`Fetched ${databaseTreks.length} treks from Database Sheet (Sheet13)`);
+      } catch (dbError) {
+        console.error("Database Sheet fetch error:", dbError);
       }
 
-      // 3. Merge Data
+      // 3. Keep old sheet fetch for Live Trip status if needed (optional, keeping it simple for now)
+      let liveSheetRecords: any[] = [];
+      try {
+        const sheetId = "1Ft94dOMfapiHeHh3IdRUBOMgPhRf6WTFZnv51aVwWK8";
+        const liveGid = "1778692444"; // Original live status sheet
+        const liveUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${liveGid}`;
+        const { data: liveCsvData } = await axios.get(liveUrl, { headers, timeout: 10000 });
+        liveSheetRecords = parse(liveCsvData, { columns: true, skip_empty_lines: true });
+      } catch (e) {}
+
+      // 4. Merge & Enhance
       const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
       
-      const parseSheetDate = (dateStr: string) => {
-        // Expected format: 12-Jun-2026
-        const parts = dateStr.split("-");
-        if (parts.length >= 2) {
-          return {
-            day: parts[0].trim(),
-            month: parts[1].trim().substring(0, 3).toLowerCase()
-          };
-        }
-        return null;
-      };
-
-      const parseWebsiteDate = (dateStr: string) => {
-        // Expected format: 12 Jun - 29 Jun 2026 or Jun 2026
-        const firstPart = dateStr.split("-")[0].trim(); // "12 Jun" or "Jun 2026"
-        const parts = firstPart.split(/\s+/);
-        
-        if (parts.length >= 2) {
-          // Check if the first part is a number (day)
-          if (/^\d+$/.test(parts[0])) {
-            return {
-              day: parts[0].trim(),
-              month: parts[1].trim().substring(0, 3).toLowerCase()
-            };
-          } else {
-            // Format might be "Jun 2026"
-            return {
-              day: "1", // Default to 1 if no day found
-              month: parts[0].trim().substring(0, 3).toLowerCase()
-            };
-          }
-        }
-        return null;
-      };
-
+      // First, process website trips (Live)
       const mergedTrips: Trip[] = websiteTrips.map((wTrip, index) => {
-        const wDateInfo = parseWebsiteDate(wTrip.date);
-        
-        const sheetMatch = records.find((r: any) => {
-          // Find the right keys (case-insensitive, handles multiple spaces)
+        // ... (existing matching logic with liveSheetRecords for status)
+        const liveMatch = liveSheetRecords.find((r: any) => {
           const tripKey = Object.keys(r).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'trip' || k.toLowerCase().replace(/\s+/g, ' ') === 'trip name');
-          const dateKey = Object.keys(r).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'start date');
-          
-          const nameMatch = tripKey && normalize(r[tripKey] || "") === normalize(wTrip.name);
-          const sDateInfo = dateKey ? parseSheetDate(r[dateKey] || "") : null;
-          
-          let dateMatch = false;
-          if (wDateInfo && sDateInfo) {
-            // Compare day and month
-            dateMatch = parseInt(wDateInfo.day) === parseInt(sDateInfo.day) && wDateInfo.month === sDateInfo.month;
-          }
-          
-          return nameMatch && dateMatch;
+          return tripKey && normalize(r[tripKey] || "") === normalize(wTrip.name);
         });
 
-        const statusKey = Object.keys(records[0] || {}).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'status');
-        const signUpsKey = Object.keys(records[0] || {}).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'sign ups');
+        const dbMatch = databaseTreks.find((dt: any) => normalize(dt.name) === normalize(wTrip.name));
+
+        const statusKey = Object.keys(liveSheetRecords[0] || {}).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'status');
+        const signUpsKey = Object.keys(liveSheetRecords[0] || {}).find(k => k.toLowerCase().replace(/\s+/g, ' ') === 'sign ups');
         
-        // Look for FB and Blog links in the sheet
-        const fb1Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('fb1') || k.toLowerCase().includes('facebook 1'));
-        const fb2Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('fb2') || k.toLowerCase().includes('facebook 2'));
-        const blog1Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('blog 1') || k.toLowerCase().includes('write up 1'));
-        const blog2Key = Object.keys(records[0] || {}).find(k => k.toLowerCase().includes('blog 2') || k.toLowerCase().includes('write up 2'));
-
-        const status = sheetMatch && statusKey && normalize(sheetMatch[statusKey] || "") === "open" ? "open" : "closed";
-        const signUps = sheetMatch && signUpsKey ? sheetMatch[signUpsKey] : undefined;
-
-        const fbLinks = [...(wTrip.fbLinks || [])];
-        if (sheetMatch) {
-          if (fb1Key && sheetMatch[fb1Key]) {
-            const cleaned = cleanFacebookUrl(normalizeUrl(sheetMatch[fb1Key]));
-            if (!fbLinks.includes(cleaned)) fbLinks.push(cleaned);
-          }
-          if (fb2Key && sheetMatch[fb2Key]) {
-            const cleaned = cleanFacebookUrl(normalizeUrl(sheetMatch[fb2Key]));
-            if (!fbLinks.includes(cleaned)) fbLinks.push(cleaned);
-          }
-        }
-
-        const blogLinks = [...(wTrip.blogLinks || [])];
-        if (sheetMatch) {
-          if (blog1Key && sheetMatch[blog1Key] && !blogLinks.includes(sheetMatch[blog1Key])) blogLinks.push(sheetMatch[blog1Key]);
-          if (blog2Key && sheetMatch[blog2Key] && !blogLinks.includes(sheetMatch[blog2Key])) blogLinks.push(sheetMatch[blog2Key]);
-        }
+        const status = liveMatch && statusKey && normalize(liveMatch[statusKey] || "") === "open" ? "open" : "closed";
+        const signUps = liveMatch && signUpsKey ? liveMatch[signUpsKey] : undefined;
 
         return {
-          id: `trip-${index}`,
+          id: `live-${index}`,
           name: wTrip.name,
           grade: (wTrip.grade as Grade) || 1,
           date: wTrip.date,
           month: wTrip.month || "Other",
+          region: wTrip.region,
           status: status as "open" | "closed",
           websiteUrl: wTrip.url,
-          description: `Fixed Departure: ${wTrip.date}`,
+          description: `Fixed Departure`,
+          duration: dbMatch?.duration || undefined,
           signUps: signUps,
-          fbLinks: fbLinks.length > 0 ? fbLinks.slice(0, 2) : undefined,
-          blogLinks: blogLinks.length > 0 ? blogLinks.slice(0, 5) : undefined
+          fbLinks: wTrip.fbLinks?.length > 0 ? wTrip.fbLinks.slice(0, 2) : undefined,
+          blogLinks: wTrip.blogLinks?.length > 0 ? wTrip.blogLinks.slice(0, 5) : undefined,
+          isLive: true
         };
       });
 
-      if (mergedTrips.length === 0 && websiteTrips.length === 0) {
-        console.log("No trips found on website");
+      // Second, add Database-only options (Discovery)
+      databaseTreks.forEach((dbTrek, index) => {
+        // Skip if already in merged as a live trip
+        if (mergedTrips.find(t => normalize(t.name) === normalize(dbTrek.name))) return;
+
+        const knownWebsiteInfo = websiteTrips.find(wt => normalize(wt.name) === normalize(dbTrek.name));
+
+        // Create entries for EACH suitable month
+        dbTrek.months.forEach((m: string, mIndex: number) => {
+          const monthMap: { [key: string]: string } = {
+            'jan': 'January', 'feb': 'February', 'mar': 'March', 'apr': 'April',
+            'may': 'May', 'jun': 'June', 'jul': 'July', 'aug': 'August',
+            'sep': 'September', 'oct': 'October', 'nov': 'November', 'dec': 'December'
+          };
+          const stdMonth = monthMap[m.toLowerCase().substring(0, 3)] || m;
+
+          mergedTrips.push({
+            id: `db-${index}-${mIndex}`,
+            name: dbTrek.name,
+            grade: (dbTrek.grade as Grade) || (knownWebsiteInfo?.grade as Grade) || 1, 
+            date: `On Request (${stdMonth})`,
+            month: stdMonth,
+            region: detectRegion(dbTrek.region || "", "") || knownWebsiteInfo?.region || detectRegion(dbTrek.name),
+            status: "open",
+            websiteUrl: knownWebsiteInfo?.url || `https://whitemagicadventure.com/search?keyword=${encodeURIComponent(dbTrek.name)}`,
+            description: `Trek Database Option - ${dbTrek.duration || 'Flexible duration'}`,
+            duration: dbTrek.duration,
+            isLive: false,
+            fbLinks: knownWebsiteInfo?.fbLinks || [],
+            blogLinks: knownWebsiteInfo?.blogLinks || []
+          });
+        });
+      });
+
+      if (mergedTrips.length === 0) {
+        console.log("No trips found in web or db");
         return res.json([]);
       }
 
