@@ -3,7 +3,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { parse } from "csv-parse/sync";
 
-// Deployment Trigger: 1.0.4 - Sync with server.ts
+// Deployment Trigger: 1.0.5 - Sync with server.ts
 export type Grade = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 export interface Trip {
@@ -118,31 +118,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const html = webRes.value.data;
       const $ = cheerio.load(html);
       const tripPromises: Promise<any>[] = [];
-      const MAX_DETAIL_FETCHES = 8; // Very limited for Vercel
-      
+      const MAX_DETAIL_FETCHES = 100;
+
       $(".views-row, .trip-box, .trip-container").each((i, el) => {
         const container = $(el);
         let linkEl = container.find("h2 a, h3 a, .heading a, .trip-name a").first();
         if (linkEl.length === 0) {
           linkEl = container.find("a[href*='/trek'], a[href*='/climb'], a[href*='/discover']").first();
         }
-        
+
         const name = linkEl.text().trim();
         const link = linkEl.attr("href");
-        
+
         if (name && name.length > 3 && link && !link.includes('#')) {
           const containerText = container.text().replace(/\s+/g, ' ').trim();
           const dateRegex = /(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)/gi;
           const dates = containerText.match(dateRegex);
-          
+
           if (dates && dates.length > 0) {
             const startDateText = dates[0];
             const yearMatch = containerText.match(/\b20\d{2}\b/);
             const year = yearMatch ? yearMatch[0] : "2026";
-            
-            let displayDate = dates.length > 1 ? `${dates[0]} - ${dates[dates.length-1]}` : dates[0];
+
+            let displayDate = dates.length > 1 ? `${dates[0]} - ${dates[dates.length - 1]}` : dates[0];
             if (!displayDate.includes(year)) displayDate += ` ${year}`;
-            
+
             let grade = 1;
             const difficultyKeywords = "Moderate|Challenging|Beginner|Intermediate|Advanced|Technical|Introductory|Trek|Climb|Peak|Expedition|Course|Difficulty|Level|Grade";
             const numbers = containerText.match(/\b([1-9])\b/g);
@@ -169,9 +169,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               const capitalized = found.charAt(0).toUpperCase() + found.slice(1).toLowerCase();
               month = monthMap[capitalized] || capitalized;
             }
-            
+
             const tripUrl = link.startsWith("http") ? link : `https://whitemagicadventure.com${link}`;
-            
+
             if (!websiteTrips.find(t => t.name === name && t.date === displayDate)) {
               const tripData = {
                 name,
@@ -181,21 +181,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 grade: Math.min(Math.max(grade, 1), 10),
                 url: tripUrl,
                 fbLinks: [] as string[],
-                blogLinks: [] as string[]
+                blogLinks: [] as string[],
+                description: ""
               };
               websiteTrips.push(tripData);
-              
+
               if (tripPromises.length < MAX_DETAIL_FETCHES) {
                 tripPromises.push(
-                  axios.get(tripUrl, { headers, timeout: 2500 }) 
+                  axios.get(tripUrl, { headers, timeout: 8000 })
                     .then(({ data: tripHtml }) => {
                       const $trip = cheerio.load(tripHtml);
+
+                      // Try to find a summary paragraph
+                      $trip(".field-name-body p, .trip-description p, #block-system-main p").each((_, p) => {
+                        const pText = $trip(p).text().trim();
+                        if (pText.length > 50 && pText.length < 600 && !tripData.description) {
+                          if (!/Album|Blogs|Featured|Itinerary|Cost|Highlights/i.test(pText)) {
+                            tripData.description = pText;
+                          }
+                        }
+                      });
+
                       $trip("p, strong, b, span, h3").each((_, el) => {
                         const $el = $trip(el);
                         if ($el.children('div, section, article, nav').length > 0) return;
                         const text = $el.text().trim();
                         if (!text) return;
-                        
+
+                        if (!tripData.description && text.length > 60 && text.length < 500 && !/Album|Blogs|Featured|News/i.test(text)) {
+                          if (text.split('.').length > 1) {
+                            tripData.description = text;
+                          }
+                        }
+
                         if (/Photo\s+Album/i.test(text) && tripData.fbLinks.length === 0) {
                           let $next = $el.closest('div, p, h3');
                           let foundCount = 0;
@@ -217,7 +235,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             $next = $next.next();
                           }
                         }
-                        
+
                         if (/Featured\s+news\s+articles/i.test(text)) {
                           let $container = $el.closest('div, p, h3');
                           let foundCount = 0;
@@ -285,7 +303,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         }
                       });
                     })
-                    .catch(() => {})
+                    .catch(() => { })
                 );
               }
             }
@@ -345,7 +363,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         region: wTrip.region,
         status: status as "open" | "closed",
         websiteUrl: wTrip.url,
-        description: `Fixed Departure`,
+        description: wTrip.description || `Fixed Departure`,
         duration: dbMatch?.duration || undefined,
         signUps: signUps,
         fbLinks: wTrip.fbLinks?.length > 0 ? wTrip.fbLinks.slice(0, 2) : undefined,

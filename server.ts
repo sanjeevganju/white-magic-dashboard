@@ -1,5 +1,5 @@
 import express from "express";
-// Deployment Trigger: 1.0.2 - Photo Albums Fix
+// Deployment Trigger: 1.0.5 - Photo Albums & Descriptions Sync
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import axios from "axios";
@@ -91,19 +91,12 @@ async function startServer() {
       let websiteTrips: any[] = [];
       try {
         const websiteUrl = "https://whitemagicadventure.com/trips";
-        const { data: html } = await axios.get(websiteUrl, { headers, timeout: 10000 });
+        const { data: html } = await axios.get(websiteUrl, { headers, timeout: 15000 });
         console.log(`Website HTML fetched, length: ${html.length}`);
         const $ = cheerio.load(html);
         
-        // The user mentioned "date in front of them". 
-        // Let's look for elements that might contain dates and trip names.
-        // We'll look for any element that contains a month name and a year.
-        const monthRegex = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}/i;
-        const dayMonthRegex = /\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
-
-        // Find all trip containers
         const tripPromises: Promise<any>[] = [];
-        const MAX_DETAIL_FETCHES = 100; // Increased from 20/30 to cover all trips
+        const MAX_DETAIL_FETCHES = 100; // Increased to cover all trips
         
         $(".views-row, .trip-box, .trip-container").each((i, el) => {
           const container = $(el);
@@ -129,7 +122,6 @@ async function startServer() {
               let displayDate = dates.length > 1 ? `${dates[0]} - ${dates[dates.length-1]}` : dates[0];
               if (!displayDate.includes(year)) displayDate += ` ${year}`;
               
-              // Extract Grade
               let grade = 1;
               const difficultyKeywords = "Moderate|Challenging|Beginner|Intermediate|Advanced|Technical|Introductory|Trek|Climb|Peak|Expedition|Course|Difficulty|Level|Grade";
               const numbers = containerText.match(/\b([1-9])\b/g);
@@ -144,7 +136,6 @@ async function startServer() {
                 }
               }
 
-              // Standardize Month
               const monthMap: { [key: string]: string } = {
                 'Jan': 'January', 'Feb': 'February', 'Mar': 'March', 'Apr': 'April',
                 'May': 'May', 'Jun': 'June', 'Jul': 'July', 'Aug': 'August',
@@ -169,27 +160,42 @@ async function startServer() {
                   grade: Math.min(Math.max(grade, 1), 10),
                   url: tripUrl,
                   fbLinks: [] as string[],
-                  blogLinks: [] as string[]
+                  blogLinks: [] as string[],
+                  description: ""
                 };
                 websiteTrips.push(tripData);
                 
-                // Fetch individual trip page for FB and Blog links
                 if (tripPromises.length < MAX_DETAIL_FETCHES) {
                   tripPromises.push(
                     axios.get(tripUrl, { headers, timeout: 8000 })
                       .then(({ data: tripHtml }) => {
                         const $trip = cheerio.load(tripHtml);
                         
-                        // Find Photo Albums and Blogs strictly from the text section
+                        // Try to find a summary paragraph
+                        $trip(".field-name-body p, .trip-description p, #block-system-main p").each((_, p) => {
+                          const pText = $trip(p).text().trim();
+                          if (pText.length > 50 && pText.length < 600 && !tripData.description) {
+                            if (!/Album|Blogs|Featured|Itinerary|Cost|Highlights/i.test(pText)) {
+                              tripData.description = pText;
+                            }
+                          }
+                        });
+
                         $trip("p, strong, b, span, h3").each((_, el) => {
                           const $el = $trip(el);
-                          // Prevent searching if this element contains too much markup (it's likely a container)
                           if ($el.children('div, section, article, nav').length > 0) return;
 
                           const text = $el.text().trim();
                           if (!text) return;
+
+                          // Extract description if not found via specific classes
+                          if (!tripData.description && text.length > 60 && text.length < 500 && !/Album|Blogs|Featured|News/i.test(text)) {
+                            // Basic heuristic for a summary
+                            if (text.split('.').length > 1) {
+                              tripData.description = text;
+                            }
+                          }
                           
-                          // Version: 1.0.3 - Robust Scraping for Albums
                           if (/Photo\s+Album/i.test(text) && tripData.fbLinks.length === 0) {
                             let $next = $el.closest('div, p, h3');
                             let foundCount = 0;
@@ -418,7 +424,7 @@ async function startServer() {
           region: wTrip.region,
           status: status as "open" | "closed",
           websiteUrl: wTrip.url,
-          description: `Fixed Departure`,
+          description: wTrip.description || `Fixed Departure`,
           duration: dbMatch?.duration || undefined,
           signUps: signUps,
           fbLinks: wTrip.fbLinks?.length > 0 ? wTrip.fbLinks.slice(0, 2) : undefined,
