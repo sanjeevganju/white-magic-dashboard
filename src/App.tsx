@@ -70,7 +70,7 @@ export default function App() {
   const filteredTrips = useMemo(() => {
     if (isExplorerInitial) return [];
 
-    return trips.filter(trip => {
+    let result = trips.filter(trip => {
       // Basic filters
       const matchesMonth = selectedMonths.length === 0 || selectedMonths.includes(trip.month);
       const matchesGrade = selectedGrades.length === 0 || selectedGrades.includes(Number(trip.grade) as Grade);
@@ -78,12 +78,22 @@ export default function App() {
       const matchesSearch = trip.name.toLowerCase().includes(searchQuery.toLowerCase());
       
       // Mode filter
-      // Departures tab: Only shows trips that are live (from website)
-      // Explorer tab: Shows EVERYTHING that matches filters (Live + Database)
       const matchesMode = viewMode === 'departures' ? trip.isLive : true;
       
       return matchesMonth && matchesGrade && matchesRegion && matchesSearch && matchesMode;
     });
+
+    // Deduplicate for Explorer mode - show each unique trek only once
+    if (viewMode === 'explorer') {
+      const seen = new Set<string>();
+      result = result.filter(trip => {
+        if (seen.has(trip.name)) return false;
+        seen.add(trip.name);
+        return true;
+      });
+    }
+
+    return result;
   }, [trips, selectedMonths, selectedGrades, selectedRegions, searchQuery, viewMode, isExplorerInitial]);
 
   const toggleMonth = (month: string) => {
@@ -394,7 +404,7 @@ export default function App() {
                         trip.isLive ? (trip.status === 'open' ? 'text-green-600' : 'text-mountain-600') : 'text-mountain-600'
                       )}>
                         <Calendar className="w-3 h-3" />
-                        {trip.date}
+                        {viewMode === 'explorer' && !trip.isLive ? 'On Request' : trip.date}
                         {trip.duration && (
                           <span className="px-1.5 py-0.5 bg-mountain-950 border border-mountain-800 rounded-lg text-[9px] text-mountain-600 font-bold">
                             {trip.duration}
