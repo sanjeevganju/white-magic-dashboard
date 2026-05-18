@@ -1,5 +1,5 @@
 /**
- * Version: 1.0.2 - Deployment Trigger for Photo Albums Fix
+ * Version: 1.0.5 - Vercel API Sync Fix
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
